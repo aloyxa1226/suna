@@ -22,6 +22,9 @@ from agentpress.response_processor import (
 )
 from services.supabase import DBConnection
 from utils.logger import logger
+from langfuse.client import StatefulGenerationClient, StatefulTraceClient
+from services.langfuse import langfuse
+import datetime
 
 # Type alias for tool choice
 ToolChoice = Literal["auto", "required", "none"]
@@ -34,15 +37,27 @@ class ThreadManager:
     XML-based tool execution patterns.
     """
 
-    def __init__(self):
+    def __init__(self, trace: Optional[StatefulTraceClient] = None, is_agent_builder: bool = False, target_agent_id: Optional[str] = None):
         """Initialize ThreadManager.
 
+        Args:
+            trace: Optional trace client for logging
+            is_agent_builder: Whether this is an agent builder session
+            target_agent_id: ID of the agent being built (if in agent builder mode)
         """
         self.db = DBConnection()
         self.tool_registry = ToolRegistry()
+        self.trace = trace
+        self.is_agent_builder = is_agent_builder
+        self.target_agent_id = target_agent_id
+        if not self.trace:
+            self.trace = langfuse.trace(name="anonymous:thread_manager")
         self.response_processor = ResponseProcessor(
             tool_registry=self.tool_registry,
-            add_message_callback=self.add_message
+            add_message_callback=self.add_message,
+            trace=self.trace,
+            is_agent_builder=self.is_agent_builder,
+            target_agent_id=self.target_agent_id
         )
         self.context_manager = ContextManager()
 
@@ -77,9 +92,9 @@ class ThreadManager:
         data_to_insert = {
             'thread_id': thread_id,
             'type': type,
-            'content': json.dumps(content) if isinstance(content, (dict, list)) else content,
+            'content': content,
             'is_llm_message': is_llm_message,
-            'metadata': json.dumps(metadata or {}), # Ensure metadata is always a JSON object
+            'metadata': metadata or {},
         }
 
         try:
@@ -112,7 +127,8 @@ class ThreadManager:
         client = await self.db.client
 
         try:
-            result = await client.rpc('get_llm_formatted_messages', {'p_thread_id': thread_id}).execute()
+            # result = await client.rpc('get_llm_formatted_messages', {'p_thread_id': thread_id}).execute()
+            result = await client.table('messages').select('message_id, content').eq('thread_id', thread_id).eq('is_llm_message', True).order('created_at').execute()
 
             # Parse the returned data which might be stringified JSON
             if not result.data:
@@ -121,23 +137,17 @@ class ThreadManager:
             # Return properly parsed JSON objects
             messages = []
             for item in result.data:
-                if isinstance(item, str):
+                if isinstance(item['content'], str):
                     try:
-                        parsed_item = json.loads(item)
+                        parsed_item = json.loads(item['content'])
+                        parsed_item['message_id'] = item['message_id']
                         messages.append(parsed_item)
                     except json.JSONDecodeError:
-                        logger.error(f"Failed to parse message: {item}")
+                        logger.error(f"Failed to parse message: {item['content']}")
                 else:
-                    messages.append(item)
-
-            # Ensure tool_calls have properly formatted function arguments
-            for message in messages:
-                if message.get('tool_calls'):
-                    for tool_call in message['tool_calls']:
-                        if isinstance(tool_call, dict) and 'function' in tool_call:
-                            # Ensure function.arguments is a string
-                            if 'arguments' in tool_call['function'] and not isinstance(tool_call['function']['arguments'], str):
-                                tool_call['function']['arguments'] = json.dumps(tool_call['function']['arguments'])
+                    content = item['content']
+                    content['message_id'] = item['message_id']
+                    messages.append(content)
 
             return messages
 
@@ -161,7 +171,8 @@ class ThreadManager:
         include_xml_examples: bool = False,
         enable_thinking: Optional[bool] = False,
         reasoning_effort: Optional[str] = 'low',
-        enable_context_manager: bool = True
+        enable_context_manager: bool = True,
+        generation: Optional[StatefulGenerationClient] = None,
     ) -> Union[Dict[str, Any], AsyncGenerator]:
         """Run a conversation thread with LLM integration and tool execution.
 
@@ -319,9 +330,43 @@ Here are the XML tools available with examples:
                     openapi_tool_schemas = self.tool_registry.get_openapi_schemas()
                     logger.debug(f"Retrieved {len(openapi_tool_schemas) if openapi_tool_schemas else 0} OpenAPI tool schemas")
 
+
+                uncompressed_total_token_count = token_counter(model=llm_model, messages=prepared_messages)
+
+                if uncompressed_total_token_count > (llm_max_tokens or (100 * 1000)):
+                    _i = 0 # Count the number of ToolResult messages
+                    for msg in reversed(prepared_messages): # Start from the end and work backwards
+                        if "content" in msg and msg['content'] and "ToolResult" in msg['content']: # Only compress ToolResult messages
+                            _i += 1 # Count the number of ToolResult messages
+                            msg_token_count = token_counter(messages=[msg]) # Count the number of tokens in the message
+                            if msg_token_count > 5000: # If the message is too long
+                                if _i > 1: # If this is not the most recent ToolResult message
+                                    message_id = msg.get('message_id') # Get the message_id
+                                    if message_id:
+                                        msg["content"] = msg["content"][:10000] + "... (truncated)" + f"\n\nThis message is too long, use the expand-message tool with message_id \"{message_id}\" to see the full message" # Truncate the message
+                                else:
+                                    msg["content"] = msg["content"][:200000] + f"\n\nThis message is too long, repeat relevant information in your response to remember it" # Truncate to 300k characters to avoid overloading the context at once, but don't truncate otherwise
+
+                compressed_total_token_count = token_counter(model=llm_model, messages=prepared_messages)
+                logger.info(f"token_compression: {uncompressed_total_token_count} -> {compressed_total_token_count}") # Log the token compression for debugging later
+
                 # 5. Make LLM API call
                 logger.debug("Making LLM API call")
                 try:
+                    if generation:
+                        generation.update(
+                            input=prepared_messages,
+                            start_time=datetime.datetime.now(datetime.timezone.utc),
+                            model=llm_model,
+                            model_parameters={
+                              "max_tokens": llm_max_tokens,
+                              "temperature": llm_temperature,
+                              "enable_thinking": enable_thinking,
+                              "reasoning_effort": reasoning_effort,
+                              "tool_choice": tool_choice,
+                              "tools": openapi_tool_schemas,
+                            }
+                        )
                     llm_response = await make_llm_api_call(
                         prepared_messages, # Pass the potentially modified messages
                         llm_model,
@@ -347,7 +392,7 @@ Here are the XML tools available with examples:
                         thread_id=thread_id,
                         config=processor_config,
                         prompt_messages=prepared_messages,
-                        llm_model=llm_model
+                        llm_model=llm_model,
                     )
 
                     return response_generator
@@ -359,7 +404,7 @@ Here are the XML tools available with examples:
                         thread_id=thread_id,
                         config=processor_config,
                         prompt_messages=prepared_messages,
-                        llm_model=llm_model
+                        llm_model=llm_model,
                     )
                     return response_generator # Return the generator
 

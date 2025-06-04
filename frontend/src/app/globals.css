@@ -1,5 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@plugin 'tailwind-scrollbar';
+@plugin 'tailwind-scrollbar-hide';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -415,7 +417,8 @@
     margin-top: 0.5em;
     margin-bottom: 0.5em;
     padding: 0.75em 1em;
-    background-color: theme('colors.slate.100');
+    /* background 95 */
+    background-color: theme('colors.background/95');
     border-radius: 0.375rem;
     overflow-x: auto;
     font-family: var(--font-mono);
@@ -437,7 +440,7 @@
     padding: 0.2em 0.4em;
     font-size: 0.85em;
     font-family: var(--font-mono);
-    background-color: theme('colors.slate.100');
+    background-color: theme('colors.background/95');
     border-radius: 3px;
     word-break: break-word;
   }
@@ -476,14 +479,14 @@
   .dark & {
     /* Code blocks in dark mode */
     & pre {
-      background-color: theme('colors.zinc.800');
-      border: 1px solid theme('colors.zinc.700');
+      background-color: theme('colors.background/95');
+      /* border: 1px solid theme('colors.zinc.700'); */
     }
 
     & code:not([class*='language-']) {
-      background-color: theme('colors.zinc.800');
+      background-color: theme('colors.background/95');
       color: theme('colors.zinc.200');
-      border: 1px solid theme('colors.zinc.700');
+      /* border: 1px solid theme('colors.zinc.700'); */
     }
 
     /* Tables in dark mode */
@@ -540,6 +543,114 @@
     & .hljs-name,
     & .hljs-strong {
       font-weight: bold;
+    }
+  }
+}
+
+.bg-pattern-grid {
+  background-image: 
+    linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.dark .bg-pattern-grid {
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.bg-checker-pattern {
+  background-image: linear-gradient(45deg, #f3f4f6 25%, transparent 25%),
+    linear-gradient(-45deg, #f3f4f6 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #f3f4f6 75%),
+    linear-gradient(-45deg, transparent 75%, #f3f4f6 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  background-color: #ffffff;
+}
+
+.dark .bg-checker-pattern-dark {
+  background-image: linear-gradient(45deg, rgba(39, 39, 42, 0.7) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(39, 39, 42, 0.7) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(39, 39, 42, 0.7) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(39, 39, 42, 0.7) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  background-color: rgba(24, 24, 27, 0.7);
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@theme {
+  --animate-shimmer: shimmer 1s infinite;
+  --animate-gradient-shift: gradient-shift 2s ease infinite;
+}
+
+.animate-shimmer {
+  @apply relative overflow-hidden rounded-md;
+  @apply bg-gradient-to-r from-primary/10 via-primary/5 to-primary/10;
+  background-size: 200% 200%;
+  animation: var(--animate-gradient-shift);
+}
+
+.animate-shimmer::before {
+  content: '';
+  @apply absolute top-0 left-0 w-full h-full;
+  background: linear-gradient(
+    140deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: var(--animate-shimmer);
+  width: 100%;
+  transform: translateX(-100%);
+}
+
+.animate-shimmer-gray {
+  @apply relative overflow-hidden rounded-md;
+  @apply bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200;
+  background-size: 200% 200%;
+  animation: var(--animate-gradient-shift);
+}
+
+.animate-shimmer-gray::before {
+  content: '';
+  @apply absolute top-0 left-0 w-full h-full;
+  background: linear-gradient(
+    140deg
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.8) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: var(--animate-shimmer);
+  width: 100%;
+  transform: translateX(-100%);
+}
+
+@theme inline {
+  --animate-shiny-text: shiny-text 5s infinite;
+ 
+  @keyframes shiny-text {
+    0%,
+    90%,
+    100% {
+      background-position: calc(-100% - var(--shiny-width)) 0;
+    }
+    30%,
+    60% {
+      background-position: calc(100% + var(--shiny-width)) 0;
     }
   }
 }

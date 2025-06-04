@@ -191,3 +191,10 @@ supabase/.temp/storage-version
 
 
 .env.scripts
+
+redis_data
+rabbitmq_data
+
+.setup_progress
+
+.setup_env.json

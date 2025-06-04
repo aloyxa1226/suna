@@ -3,6 +3,7 @@ from daytona_api_client.models.workspace_state import WorkspaceState
 from dotenv import load_dotenv
 from utils.logger import logger
 from utils.config import config
+from utils.config import Configuration
 
 load_dotenv()
 
@@ -91,7 +92,7 @@ def create_sandbox(password: str, project_id: str = None):
         labels = {'id': project_id}
         
     params = CreateSandboxParams(
-        image="kortix/suna:0.1.2",
+        image=Configuration.SANDBOX_IMAGE_NAME,
         public=True,
         labels=labels,
         env_vars={
@@ -123,4 +124,21 @@ def create_sandbox(password: str, project_id: str = None):
     
     logger.debug(f"Sandbox environment successfully initialized")
     return sandbox
+
+async def delete_sandbox(sandbox_id: str):
+    """Delete a sandbox by its ID."""
+    logger.info(f"Deleting sandbox with ID: {sandbox_id}")
+    
+    try:
+        # Get the sandbox
+        sandbox = daytona.get_current_sandbox(sandbox_id)
+        
+        # Delete the sandbox
+        daytona.remove(sandbox)
+        
+        logger.info(f"Successfully deleted sandbox {sandbox_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error deleting sandbox {sandbox_id}: {str(e)}")
+        raise e
 
